@@ -69,6 +69,9 @@ class Crystal::Repl::Interpreter
   # - when doing `finish`, we'd like to exit the current frame
   @pry_max_target_frame : Int32?
 
+  # Should we restart the frame after the pry instruction? Boolean sets by `restart_frame`.
+  @pry_restart_frame : Bool = false
+
   # The set of local variables for interpreting code.
   getter local_vars : LocalVars
 
@@ -333,6 +336,11 @@ class Crystal::Repl::Interpreter
         pry_max_target_frame = @pry_max_target_frame
         if !pry_max_target_frame || @call_stack.last.real_frame_index <= pry_max_target_frame
           pry(ip, instructions, stack_bottom, stack)
+        end
+
+        if @pry_restart_frame
+          @pry_restart_frame = false
+          restart_frame
         end
       end
 
@@ -1040,6 +1048,24 @@ class Crystal::Repl::Interpreter
     stack.clear({{size}})
   end
 
+  private macro restart_frame
+    # If we are in one or several blocks, pop the frames put by the blocks
+    %frames_to_pop = @call_stack.size - @call_stack.last.real_frame_index - 1
+    %frames_to_pop.times do
+      @call_stack.pop
+    end
+
+    %call_frame = @call_stack.last
+
+    # Restore the instruction pointer to the beginning
+    ip = %call_frame.compiled_def.instructions.instructions.to_unsafe
+
+    # Restore instructions, and stack from the current call frame
+    instructions = %call_frame.compiled_def.instructions
+    stack = %call_frame.stack
+    stack_bottom = %call_frame.stack_bottom
+  end
+
   def aligned_sizeof_type(type : Type) : Int32
     @context.aligned_sizeof_type(type)
   end
@@ -1270,6 +1296,11 @@ class Crystal::Repl::Interpreter
       when "finish"
         @pry_node = node
         @pry_max_target_frame = @call_stack.last.real_frame_index - 1
+        break
+      when "restart_frame"
+        @pry_node = nil
+        @pry_max_target_frame = @call_stack.last.real_frame_index
+        @pry_restart_frame = true
         break
       when "whereami"
         whereami(a_def, location)
